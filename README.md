@@ -1,0 +1,5 @@
+# EBPF_project
+
+로컬 환경에서 구동(ubuntu 22.04 LTS)
+---
+![image](https://github.com/ziguin0925/web_1/assets/117524772/b5180bd5-a257-4d82-92e2-5f3230724837)
