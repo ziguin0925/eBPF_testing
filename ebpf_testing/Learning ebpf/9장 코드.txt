@@ -1,0 +1,77 @@
+#include "vmlinux.h“
+#include <bpf/bpf_core_read.h> 
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h> 
+
+char LICENSE[] SEC("license") = "GPL"; 
+
+#define EPERM 1 
+#define AF_INET 2
+
+const __u32 blockme = 16843009; // 1.1.1.1 -> int 
+
+
+SEC("lsm/socket_connect") 
+int BPF_PROG(restrict_connect, struct socket *sock, struct sockaddr *address,  int addrlen,  int ret) 
+#ret :  LSM 검사 프로그램 리턴값
+#struct socket {					#소켓 주소
+	socket_state		state;
+
+	kmemcheck_bitfield_begin(type);
+	short			type;
+	kmemcheck_bitfield_end(type);
+
+	unsigned long		flags;
+
+	struct socket_wq __rcu	*wq;
+
+	struct file			*file;
+	struct sock		*sk;
+	const struct proto_ops	*ops;
+};
+
+#struct sockaddr {					#소켓 참조한 정보(소켓 port, ip주소)를저장  
+	u_short    sa_family;     // address family, 2 bytes 주소 체계구분
+	char    sa_data[14];     // IP address + Port number, 14 bytes
+};
+
+{ 
+	
+ 	if (ret != 0) 
+	{ 
+		return ret;
+	 } 
+
+	if (address->sa_family != AF_INET)   #	 IPv4인터넷 프로토콜
+	 {
+		 return 0; 
+	}
+
+	 #address에서는 ip와 port 번호가 조합되어있음.
+	 #포트번호와 ip주소를 나누어 준다
+
+	struct sockaddr_in {
+	short    sin_family;          // 주소 체계: AF_INET
+	u_short  sin_port;            // 16 비트 포트 번호, network byte order
+	struct   in_addr  sin_addr;   // 32 비트 IP 주소
+	char     sin_zero[8];         // 전체 크기를 16 비트로 맞추기 위한 dummy
+	};
+
+	struct  in_addr {
+		u_long  s_addr;     // 32비트 IP 주소를 저장 할 구조체, network byte order
+	};
+
+
+	 struct sockaddr_in *addr = (struct sockaddr_in *)address;
+	
+	 
+	 __u32 dest = addr->sin_addr.s_addr; 		#(연결 요청한)상대 호스트 ip주소 
+	 bpf_printk("lsm: found connect to %d", dest);
+
+	 if (dest == blockme)   			#1.1.1.1이면 막기.
+	{ 
+		bpf_printk("lsm: blocking %d", dest);
+		 return -EPERM;
+	 }
+ 	return 0;  #1.1.1.1이 아닐시
+}

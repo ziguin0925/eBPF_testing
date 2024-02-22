@@ -1,0 +1,7 @@
+FROM docker.io/ubuntu:latest
+ARG IMGPACK_FILTER=
+COPY / /kernel-img-repository/${IMGPACK_FILTER}
+
+LABEL org.opencontainers.image.source https://github.com/elastic/ebpf
+
+CMD ["/bin/bash", "-c", "cp -r /kernel-img-repository/* /kernel-images/"]

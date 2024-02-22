@@ -1,0 +1,25 @@
+static_resources:
+  listeners:
+  - name: InboundListener
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 15001
+    use_original_dst: true
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.tcp_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+          stat_prefix: tcp
+          cluster: PassthroughCluster
+          access_log:
+          - name: json_error_access_log
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+  clusters:
+  - connect_timeout: 5s
+    type: ORIGINAL_DST
+    lb_policy: CLUSTER_PROVIDED
+    name: PassthroughCluster
+    http2_protocol_options: {}

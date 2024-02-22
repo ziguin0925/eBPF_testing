@@ -1,0 +1,252 @@
+#include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
+#include "hello-verifier.h"
+
+int c = 1;
+char message[12] = "Hello World";
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+    __uint(key_size, sizeof(u32));
+    __uint(value_size, sizeof(u32));
+} output SEC(".maps");						#맵 생성 인라인(perf)
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u32);
+    __type(value, struct msg_t);
+} my_config SEC(".maps");						#맵 생성 인라인(hash)
+
+SEC("ksyscall/execve")
+int kprobe_exec(void *ctx)
+{
+   struct data_t data = {}; 						# "hello-verifier.h"에 정의되어있음.
+   struct msg_t *p;
+   u64 uid;
+
+   data.counter = c; 
+   c++; 
+
+   data.pid = bpf_get_current_pid_tgid();
+   uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+   data.uid = uid;
+
+   p = bpf_map_lookup_elem(&my_config, &uid); 	#첫번째 인수는 맵에 대한 포인터 값.		
+						# int bpf_map_lookup_elem(int fd, const void *key, void *value)
+						# ret = sys_bpf(BPF_MAP_LOOKUP_ELEM, &attr, attr_sz);
+   						#return = RET_PTR_TO_MAP_VALUE_OR_NULL,
+
+
+   if (p != 0) {					#맵 value 포인터 값으로 message[12] 참조 시킴.
+      char a = p->message[0];			#p가 가르키는 message[0] 포인터를 a에 넣음.
+      bpf_printk("%d", a);        
+   }
+
+   if (p != 0) {
+      bpf_probe_read_kernel(&data.message, sizeof(data.message), p->message); #저장될 주소, 메세지 데이터 사이즈, 저장할 값 포인터
+								   #long bpf_probe_read_kernel(void *dst, u32 size, const void *unsafe_ptr)
+								   #unsafe_ptr 도우미 함수
+
+
+   } else {
+      bpf_probe_read_kernel(&data.message, sizeof(data.message), message); 
+   }
+
+
+   if (c < sizeof(message)) {						#트리거 될 때 마다 c 카운터값 오름.
+      char a = message[c];						#카운터 변수가 메세지 배열의 크기보다 크지않은지 검사.
+      bpf_printk("%c", a);
+   }
+
+
+   if (c < sizeof(data.message)) {
+      char a = data.message[c];
+      bpf_printk("%c", a);
+   } 
+
+   bpf_get_current_comm(&data.command, sizeof(data.command));			#현재 커맨드 가져옴.
+   bpf_perf_event_output(ctx, &output, BPF_F_CURRENT_CPU,  &data, sizeof(data));
+		#bpf_perf_event_output(void *ctx, struct bpf_map *map, u64 flags, void *data, u64 size)
+
+   return 0;
+}
+
+SEC("xdp")
+int xdp_hello(struct xdp_md *ctx) {				#xdp라는 섹션에 함수 정의
+							# https://elixir.bootlin.com/linux/v5.19.17/source/include/uapi/linux/bpf.h#L5861
+
+
+  void *data = (void *)(long)ctx->data;				
+  void *data_end = (void *)(long)ctx->data_end;			#패킷 끝
+
+
+  
+  bpf_printk("%x %x", data, data_end); 		#이 행을 지우면 레지스터0(R0)가 초기화 되지않아 검증 실패됨.
+  return XDP_PASS;
+}
+
+
+char LICENSE[] SEC("license") = "Dual BSD/GPL";
+#지우면 검증기가 제한할거임.
+
+
+
+
+
+
+-----------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+-----------------------------------------------------------------------------------------------------------------------------------
+
+			hello-verifier.c
+
+
+
+
+#include <stdio.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <bpf/libbpf.h>
+#include "hello-verifier.h"
+#include "hello-verifier.skel.h"
+
+static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
+{
+	if (level >= LIBBPF_DEBUG)
+		return 0;
+
+	return vfprintf(stderr, format, args);
+}
+
+void handle_event(void *ctx, int cpu, void *data, unsigned int data_sz)
+{
+	struct data_t *m = data;
+
+	printf("%-6d %-6d %-4d %-16s %s\n", m->pid, m->uid, m->counter, m->command, m->message);
+}
+
+void lost_event(void *ctx, int cpu, long long unsigned int data_sz)
+{
+	printf("lost event\n");
+}
+
+int main()
+{
+    struct hello_verifier_bpf *skel;
+    int err;
+	struct perf_buffer *pb = NULL;
+
+	libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
+	libbpf_set_print(libbpf_print_fn);
+
+	char log_buf[64 * 1024];
+	LIBBPF_OPTS(bpf_object_open_opts, opts,
+		.kernel_log_buf = log_buf,
+		.kernel_log_size = sizeof(log_buf),
+		.kernel_log_level = 1,
+	);
+
+	skel = hello_verifier_bpf__open_opts(&opts);
+	if (!skel) {
+		printf("Failed to open BPF object\n");
+		return 1;
+	}
+
+	err = hello_verifier_bpf__load(skel);
+	// Print the verifier log
+	for (int i=0; i < sizeof(log_buf); i++) {
+		if (log_buf[i] == 0 && log_buf[i+1] == 0) {
+			break;
+		}
+		printf("%c", log_buf[i]);
+	}
+	if (err) {
+		printf("Failed to load BPF object\n");
+		hello_verifier_bpf__destroy(skel);
+		return 1;
+	}
+
+
+	// Configure a message to use only if the UID for the event is 501
+	uint32_t key = 501;
+	struct msg_t msg; 
+	const char *m = "hello Liz";
+	strncpy((char *)&msg.message, m, strlen(m));
+	bpf_map__update_elem(skel->maps.my_config, &key, sizeof(key), &msg, sizeof(msg), 0);
+
+	// Attach the progam to the event
+	err = hello_verifier_bpf__attach(skel);
+	if (err) {
+		fprintf(stderr, "Failed to attach BPF skeleton: %d\n", err);
+		hello_verifier_bpf__destroy(skel);
+        return 1;
+	}
+
+	pb = perf_buffer__new(bpf_map__fd(skel->maps.output), 8, handle_event, lost_event, NULL, NULL);
+	if (!pb) {
+		err = -1;
+		fprintf(stderr, "Failed to create ring buffer\n");
+		hello_verifier_bpf__destroy(skel);
+        return 1;
+	}
+
+	while (true) {
+		err = perf_buffer__poll(pb, 100 /* timeout, ms */);
+		// Ctrl-C gives -EINTR
+		if (err == -EINTR) {
+			err = 0;
+			break;
+		}
+		if (err < 0) {
+			printf("Error polling perf buffer: %d\n", err);
+			break;
+		}
+	}
+
+	perf_buffer__free(pb);
+	hello_verifier_bpf__destroy(skel);
+	return -err;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

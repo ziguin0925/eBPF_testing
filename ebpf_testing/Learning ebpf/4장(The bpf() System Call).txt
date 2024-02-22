@@ -1,0 +1,403 @@
+
+https://github.com/lizrice/learning-ebpf/tree/main/chapter4
+
+bpf() 시스템 호출
+4장 -------------------------------------------------p.79----------------------------------------------------------
+
+사용자 공간에서 시스템 호출 API를 사용하여 커널이 어떤 일을 하도록 요청한다.
+따라서 사용자 공간 애플리케이션이 eBPF 프로그램을 커널에 로드하려는 경우 일부 시스템 호출과 관련되어야 한다.
+eBPF 에서 bpf()란 시스템 호출 API이 있다.
+
+
+커널에서 실행되는 eBPF프로그램은 맵에 액세스하기 위해 syscall을 사용하지 않는다.
+	syscall interface( bpf(), bpf.xxx...() )는 사용자 공간 애플리케이션에만 사용.
+	대신 eBPF 프로그램은 도우미 함수(bpf_..._...)를 사용하여 맵을 읽고 씀. 
+
+
+ebpf프로그램을 직접 작성하다보면, bpf() syscall을 직접적으로 호출하지 않을 가능성이 있다.
+
+
+
+
+int bpf(int cmd, Union bpf_attr *attr, unsigned int size) = fd;
+{
+cmd = 수행할 명령(BPF_...인듯)
+
+bpf attr은 공용체로 각각의 필드로 구조체를 가지고 있다.
+불러내면 구조체로 옴.
+
+
+
+
+Union= 공용체, 사용법은 struct와 같지만 메모리 할당이 다름. Union의 들어가있는 모든 변수는 한 메모리 공간을 가르키는 것 같음.
+	공용체의 메모리 크기는 공용체 안의 데이터 유형이 가장 큰 타입으로 됨.(int와 char가 있다면 int의 데이터 크기가 공용체의 데이터 크기)
+	https://blog.naver.com/yujuit/223013160103
+
+size = 프로그램 데이터 크기(size of 하면 필드중 가장큰 데이터 크기를 가지고옴. BPF_PROG_LOAD명령어의 구조체의 데이터가 128
+}
+
+
+
+사용자 공간 프로그램은 syscall을 사용하여 커널에서 eBPF 프로그램 및 맵과 상호 작용합니다. (p.80그림)
+빨간색 점 probe같은 거겠지
+
+
+				bpf() 시스템 호출이 사용 (p.80그림, 81코드)
+
+
+hello-buffer-cong.py
+
+
+ execve() syscall이 실행될 때마다 eBPF프로그램은 성능 버퍼에 메시지를 보내고 ,이벤트 에 대한 정보를 커널에서 사용자 공간으로 전달.
+ 사용자 ID에 대해 서로 다른 메시지를 구성함
+
+# b["config"][ct.c_int(0)] = ct.create_string_buffer(b"Hey root!")
+# b["config"][ct.c_int(501)] = ct.create_string_buffer(b"Hi user 501!")
+                           (config맵에서 사용자 ID(key)가  501인 곳에 다음과 같은 문장을 buffer의 value값에 생성해라.)
+			   (buffer안에 b왜 들어가있는지 생각해보기) binary?
+
+Python의 ctypes 패키지를 사용하여 키와 값이 user_msg_t의 C 정의에 사용된 것과 동일한 유형인지 확인
+
+
+
+
+------------------------------------------------------strace--------------------------------------------------
+
+syscall에 대한 여러 호출이 표시됨
+bpf() 시스템 호출이 수행해야 하는 작업을 나타내는 명령이 표시됨
+
+
+
+ $ strace -e bpf ./hello-buffer-config.py
+
+			...
+		# bpf(BPF_BTF_LOAD, ...) = 3 
+		# bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_PERF_EVENT_ARRAY…) = 4 
+		# bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_HASH...) = 5 
+		# bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_KPROBE,...prog_name = "hello",...) = 
+		# bpf(BPF_MAP_UPDATE_ELEM, ...} 
+			...
+
+
+반환값은 fd.
+(btftool ... list해도 fd에 대한 정보는 안나옴.
+다른거로 fd 찾아봐야할 듯.)
+fd사용방법? 뭐 이런거. 그냥 있는건지. 사용이 되니까 있겠지.
+
+
+한 줄 씩.
+---------------# bpf(BPF_BTF_LOAD, {btf="\237\353\1\0...}, 128) = 3
+
+
+bpf()에 대한 호출은 BTF데이터 덩어리를 커널에 로드하고 bpf()시스템 호출 의 반환 값은 해당 데이터를 참조하는 파일 설명자(fd?)생성.
+
+
+ BPF 프로그램을 로딩하거나 BPF 맵을 생성하는 과정에서 bpf() 시스템 호출을 통해 파일 디스크립터가 할당되고, 이 파일 디스크립터를 이용하여 해당 BPF 프로그램이나 맵에 접근하고 제어할 수 있다. 파일 디스크립터를 통해 eBPF 리소스에 대한 조작 및 입출력 작업이 이루어진다.
+
+
+
+
+
+--------------# bpf(BPF_MAP_CREATE,{map_type=BPF_MAP_TYPE_PERF_EVENT_ARRAY, , key_size=4, value_size=4,
+			max_entries=x, ...map_name="output", ...}, 128) = 4
+
+
+맵 생성 bpf() 맵 타입, 데이터 엔트리 등  확인 가능.
+ max_entries 필드에 의해 정의된 이 맵에 보유할 수 있는 키-값 쌍은 x개로 제한됨.
+x개인 이유 = cpu코어의 갯수에 의해 넣을 수 있는 key-value값이 제한됨.
+
+
+- 위에는 perf_event_array로 보아 c언어의 (13 # BPF_PERF_OUTPUT(output); )인것을 알 수있음.
+
+
+
+-------------------------# bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_HASH...) = 5 
+
+
+맵생성 bpf(), 위와 같지만 맵 타입과 name 보고 
+(11 # BPF_HASH(config, u32, struct user_msg_t);)인 것을 알 수 있음.
+
+
+
+
+
+
+
+
+============================ # bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_KPROBE,...prog_name = "hello",...) = 6  
+
+
+
+	# bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_KPROBE, insn_cnt=44,
+
+insns=0xffffa836abe8, license="GPL", ... prog_name="hello", ... 
+
+expected_attach_type=BPF_CGROUP_INET_INGRESS, prog_btf_fd=3,...}, 128) = 6
+
+
+
+( 47 # b.attach_kprobe(event=syscall, fn_name="hello"))로 되지 않았을까 생각.
+
+
+
+
+-"prog_type" = KPROBE 형식.
+
+
+-"insn_cnt=44" = instruction counter = 44 :바이트 코드의 명령어 갯수(바이트 코드에서는 명령어 갯수와 코드 줄이 같은거로 알고 있음)
+						(바이트 코드로 변환된 뒤의 코드 줄 갯수 라고 보아도 되지 않을까. 확인 하기 jited.)
+
+
+
+-"insns=0xffffa836abe8" = 바이트 코드 명령어가 저장되는 메모리 주소? 'const struct bpf_insn * '
+
+
+
+-"expected_attach_type=BPF_CGROUP_INET_INGRESS"
+
+BPF_CGROUP_INET_INGRESS는 우연히 BPF 연결 유형 목록에서 첫 번째이기 때문에 값이 0이라고 되어있음.
+아무런 의미가 없다는 뜻 인듯. (네트워크 쪽 cgroup에 대해 알아야 될거로 보임.)
+
+-" prog_btf_fd = 3 "위에 BTF 로드한거 반환값(fd)이 3임. 커널은 해당 BTF 데이터를 사용하여 프로그램을 실행함.
+
+
+https://wariua.github.io/man-pages-ko/bpf(2)/#_1     보고 확인.
+
+
+
+
+
+
+------------------------------# bpf(BPF_MAP_UPDATE_ELEM, ...}
+
+사용자 공간에서 맵 수정
+
+	# bpf(BPF_MAP_UPDATE_ELEM, {map_fd=5, key=0xffffa7842490, value=0xffffa7a2b410, flags=BPF_ANY}, 128) = 0
+
+map_fd 보면 5인거 확인 가능 fd  가 5인거는 BPF_HASH(config map)로 만들어준거임을 확인할 수 있음. 
+따라서 config라는 HASH_MAP의 fd가 5이므로  위의 출력을 해석해보면
+config 맵에 key,value를 업데이트 해라 라는 의미.
+
+
+-"flags=BPF_ANY" - 업데이트 하려고 하는 키가 해당 맵에 존재하지 않는다면 만들어라(업데이트) 라는 플래그
+
+# b["config"][ct.c_int(0)] = ct.create_string_buffer(b"Hey root!")
+# b["config"][ct.c_int(501)] = ct.create_string_buffer(b"Hi user 501!")
+
+
+
+파일 설명자 반환값은 사용자 공간 애플리케이션 마다 다를 수 있다는 의미.
+즉 동일한 맵에 접근하기 때 각각의 프로그램은 다른 fd값으로 동일한 맵에 접근할 수 있다.라는거일듯
+
+(
+chat-gpt
+파일 디스크립터는 커널에서 특정 프로세스에 할당되므로 이 값 5는 Python 프로그램이 실행되는 특정 유저 스페이스 프로세스에 대해서만 유효합니다.
+그러나 여러 유저 스페이스 프로그램(그리고 커널 내의 여러 eBPF 프로그램)은 동일한 맵에 모두 접근할 수 있습니다.
+커널 내에서 동일한 맵 구조에 접근하는 두 개의 유저 스페이스 프로그램은 서로 다른 파일 디스크립터 값을 할당받을 수 있습니다.
+마찬가지로 두 개의 유저 스페이스 프로그램은 완전히 다른 맵에 대해 동일한 파일 디스크립터 값을 가질 수 있습니다.
+)
+
+키와 값은 모두 포인터이므로 이 추적 출력에서는 키의 숫자 값이나 값을 알 수 없다. 주소값으로 반환? 
+
+$ bpftool map dump name config
+
+BPF_MAP_CREATE 시스템 호출 에 포함된 BTF 정보의 정의를 사용하여 btftool은 맵의 정보 값을 알 수 있다. 5장에서 알려줌.
+
+
+
+bpf() 시스템 호출을 사용하여 BPF 프로그램을 커널에 로드하면 파일 설명자가 반환된다는 것을 알고 있습니다.
+커널에서는 파일 설명자를 이용해 프로그램을 가리키는 참조라고 보면된다.
+syscall을 만든 사용자 공간 프로세스는 이 파일 설명자를 소유하고, 해당 프로세스가 종료되면 fd연결이 해제되고 참조 횟수가 감소한다.
+BPF 프로그램에 대한 참조가 남아 있지 않으면 커널은 프로그램을 제거합니다.
+
+참조 횟수 카운트 한거는 어디에 있는지? 해제된다음에 감소하는거를 볼 수 있는지.
+
+
+
+-------------------------------------------고정하는 방법      87     참조카운터
+(3장 p.65)
+$ bpftool prog load hello.bpf.o /sys/fs/bpf/hello
+
+사용자 공간 프로세스도 파일 설명자를 가지고 있다.
+
+이는 메모리에 저장되어있어 시스템 부팅 후에 사라짐.
+
+파일 시스템에 고정하면 프로그램에 대한 추가 참조가 있으므로 명령이 완료된 후에도 프로그램이 로드된 상태를 유지할 수 있다.(ELF에 고정?)
+
+참조 카운터는 BPF프로그램이 이를 트리거하는 후크에 연결될 때도 증가 됨. 
+이러한 참조 횟수의 동작은 BPF 프로그램 유형(like kprobes and tracepoints)에 따라 다르고, 
+이는 항상 사용자 공간 프로세스와 연결된다.
+ 이러한 유형의 eBPF 프로그램의 경우 해당 프로세스가 종료되면 커널의 참조 횟수가 감소하여 종료되는거 같음.
+
+즉,
+BPF 프로그램을 생성하고 이를 "후크"(예: 네트워크 인터페이스, 시스템 호출 등)에 연결하면 참조 횟수가 늘어납니다. 
+그러면 원래 프로그램을 생성하고 로드한 사용자 공간 프로세스가 종료되더라도 BPF 프로그램의 참조 횟수가 0보다 큰 한 해당 프로그램은 활성 상태로 유지됩니다.
+
+네트워크 스택이나 cgroups(컨트롤 그룹의 줄임말)내에서 연결된 프로그램은 사용자 스페이스 프로세스와 
+관련이 없으므로 해당 프로그램을 로드한 사용자 스페이스 프로그램이 종료된 후에도 그 자리에 남아 있다
+사용자 공간 프로세스와 관련없는 후크
+( XDP, tc의 clsact 및 cgroup 기반 후크와 같은 일부 후크는 전역적)
+
+eBPF맵도 참조 카운터를 가지고 있다. (eBPF프로그램이 해당 맵을 사용하거나 user space에서 해당 맵의 fd를 보유할 때 증가)
+
+(
+chat gpt
+맵을 프로그램과 연결시키는 BPF_PROG_BIND_MAP 시스템 호출이 있으며, 이를 통해 맵은 사용자 스페이스 로더 프로그램이 종료되고 맵에 대한 파일 디스크립터 참조가 더 이상 유지되지 않아도 즉시 정리되지 않습니다. 또한 맵은 파일 시스템에 고정(pinned)될 수 있으며, 사용자 스페이스 프로그램은 맵의 경로를 알고 있으면 맵에 액세스할 수 있습니다.
+)
+
+
+
+
+------BPF referencecounters and file descriptors
+https://facebookmicrosites.github.io/bpf/blog/2018/08/31/object-lifetime.html
+
+
+
+------------------BPF 링크    89
+여기서는 안다룸 ;; 이런게 있다라고만 나옴.
+
+프로그램을 커널에 추가하고, 프로그램이 로드된 채로 종료될 수 있습니다.
+사용자 공간 로더된 프로그램의 파일 디스크립터가 해제되어 프로그램에 대한 참조 수가 감소하지만, BPF 링크를 통해 참조 카운터를 0이 아니게 만들 수 있다.(증가시킬 수 있다는 뜻인듯.)
+
+
+
+
+--------------------------------------------------------성능 버퍼 초기화 (pref_buff)
+
+bpf(BPF_MAP_UPDATE_ELEM, {map_fd=4, key=0xffffa7842490, value=0xffffa7a2b410, flag=BPF_ANY}, 128) = 0
+
+fd = 4 성능 버퍼에 연결됨 알 수 있음.
+
+위에서 확인했을 떄 키와 값의 갯수가 4개 씩 인것을 확인할 수 있었음.
+strace 해서 확인해보면 버퍼에 대한 출력이 4번 밖에 안 일어나는것을 확인할 수 있음. 
+
+트리거 될때마다 맵에 데이터를 쓰고, 데이터를 유저 공간의 코드를 통해 표시되기 때문에. 
+눈에 표시되는 데이터는 bpf()을 사용하여 맵으로부터 데이터를 가지고 오지 않는것이 분명하다.
+맵을 사용하지 않는다면 어떻게 우리 눈에 보이게 하는지?
+
+이유? 내용 많네 ;;
+왜 연결부터 나와. 4번밖에 나오지 않는 이유부터 말해줘야지;;
+
+----------------------------------------더많은 내용(syscall)을 표시하는 strace 
+
+$ strace -e bpf,perf_event_open,ioctl,ppoll ./hello-buffer-config.py
+
+
+--------------------------------------Kprobe 이벤트에 연결
+eBPF 프로그램을 이벤트에 연결하려면 해당 특정 이벤트를 나타내는 파일 설명자도 필요합니다. strace 출력의 다음 줄은 execve() kprobe 에 대한 파일 설명자 생성을 보여줍니다 .
+
+perf_event_open({type=0x6 /* PERF_TYPE_??? */, ...},...) = 7
+
+perf_event_open() 함수는 매개변수 목록을 받아 파일 디스크립터를 반환하며, 이 디스크립터는 이후의 시스템 호출 (read(2), mmap(2), prctl(2), fcntl(2) 등)에서 사용됩니다. 즉 성능 정보를 측정할 수 있는 파일 설명자를 생성.
+
+
+"
+$ cat /sys/bus/event_source/devices/kprobe/type
+6
+"
+
+cat통해서 나온 "kprobe/type" 6이  type = 0x6에 해당하는듯
+따라서 perf_event_open() 에 대한 호출의 유형이 값 6으로 설정되어 kprobe 유형의 perf 이벤트임을 나타냄을 알 수있음.
+위에서도 kprobe에 대한 eBPF프로그램의 fd가 6임을 알 수 있음.
+즉 fd=6; 은 hello eBPF프로그램(kprobe)을 나타냄.
+
+여기서의 strace는 kprobe가 execve() syscall에 연결되어 있음을 결정적으로 보여주는 세부 정보를 출력하지 않음
+
+
+
+https://man7.org/linux/man-pages/man2/perf_event_open.2.html
+
+하지만 (kprobe)perf_event_open()의 반환값이 7(fd) 인것을 보면 , 이걸(7) 이용해서 이벤트( 추적점)와 연결시킬거임.
+
+ioctl() 시스템 호출을보면 알 수 있음.
+\ioctl = Input/Output contol
+
+
+ioctl(7, PERF_EVENT_IOC_SET_BPF, 6) = 0
+ioctl(7, PERF_EVENT_IOC_ENABLE, 0) = 0
+
+{
+PERF_EVENT_IOC_SET_BPF [...]를 사용하면 BPF(Berkeley Packet Filter) 프로그램을 기존 kprobe 추적점 이벤트에 연결할 수 있습니다. 인수는 이전 bpf(2) 시스템 호출로 생성된 BPF 프로그램 파일 설명자입니다. bpf(2)?
+}
+
+
+을 사용하면 이 시스템에서 execve()가 실행될 때마다 eBPF 프로그램이 트리거된다. 
+
+
+
+
+
+
+-----------------------Perf_Events-------------성능 이벤트 설정 및 읽기 p.91
+
+perf_event_open({type=PERF_TYPE_SOFTWARE, size=0 /* PERF_ATTR_SIZE_??? */, config=PERF_COUNT_SW_BPF_OUTPUT, ...}, -1,  [X]  , -1, PERF_FLAG_FD_CLOEXEC) =    [Y]
+
+
+ioctl(  [Y]   , PERF_EVENT_IOC_ENABLE, 0) = 0
+
+
+perf_event_open(... , -1 , [X], ...) 에서  X는 cpu 그 앞에 '-1'은  pid임. 그 뒤는 group_fd
+
+https://man7.org/linux/man-pages/man2/perf_event_open.2.html       약간 내리면 arguments에 내용 있음.
+
+
+$ strace -e bpf ./hello-buffer-config.py이거 했을 떄 마지막 4개 호출되는 이유는 cpu코어의 갯수 
+가상 머신에서 cpu3개로 설정해줬으면 3개만 뜸 (perf_buff)
+각 cpu코어마다 1개의 버퍼 맵?이 있기 때문에.
+{
+BPF_MAP_TYPE_PERF_EVENT_ARRAY 맵 유형 이름의 "배열" 부분을 설명하며, 이 맵은 하나의 perf 링 버퍼가 아니라 각 코어에 대한 버퍼 배열을 나타냅니다.
+}
+
+
+
+
+
+-------------------------------------------링버퍼 와 차이점 p.92부터
+
+bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_RINGBUF, key_size=0, value_size=0, max_entries=4096, ... map_name="output", ...}, 128) = 4
+
+strace 이용 ring_buff확인.
+
+ perf_event_open(), ioctl() 및 bpf(BPF_MAP_UPDATE_ELEM) 시스템 호출의 징후가 없음
+링 버퍼의 경우 모든 CPU 코어에서 공유되는 파일 설명자는 하나만 있음. 그래서 마지막에 1개만 출력됨.
+마지막 출력 
+# bpf(BPF_OBJ_GET_INFO_BY_FD, {info={bpf_fd=4, info_len=80, info=0x7ffd6cfca110}}, 128) = 0
+
+
+버퍼에서는 ppoll() 보면 
+ppoll([{fd=8, 이벤트=POLLIN}, {fd=9, 이벤트=POLLIN}, {fd=10, 이벤트=POLLIN}, {fd=11, 이벤트=POLLIN}], 4, NULL, NULL, 0) = 1 ([{fd=8, revents=POLLIN}])
+			와 같이 각 cpu에 대해 fd가 있어 4개의 fd를 전달하여 폴링 이벤트로 검출?함.
+
+
+ring_buff는 사용자 공간에서 커널에 새로운 epoll인스턴스 생성 후 (  # epoll_create1(EPOLL_CLOEXEC) = 8(fd)  )
+
+
+ring_buff의 fd와 epoll인스턴스를 이어줌( epoll인스턴스에 ring_buff fd추가하도록 커널에 명령함)
+(# epoll_ctl(8, EPOLL_CTL_ADD, 4, {events=EPOLLIN, 데이터={u32=0, u64=0}}) = 0)
+
+
+사용자 공간 프로그램은 epoll_pwait()를 사용하여 링 버퍼에서 데이터를 사용할 수 있을 때까지 기다립니다. 이 호출은 데이터를 사용할 수 있는 경우에만 반환됨.(즉 트리거되어 ring_buff에 데이터가 왔을때 ?  )
+(# epoll_pwait(8, [{events=EPOLLIN, 데이터={u32=0, u64=0}}], 1, -1, NULL, 8) = 1) 이 반환값은 어디로 갈까...
+
+
+bcc, libbpf같은 프레임워크(라이브러리)사용할 경우 이러한 사항은 알 필요 없다고함.
+
+
+p.95 Reading Map Elements
+왜 BPF_MAP_GET_NEXT_KEY, BPF_MAP_LOOKUP_ELEM에서의 key값과 next_key, value가 다 같은지? 주소값이라서인가. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

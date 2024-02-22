@@ -1,0 +1,660 @@
+context(ctx) = 매개변수, 지역 변수, 반환 주소(여러 데이터) 등으로 여러 매개변수로 보면 될 듯.(struct일거임)
+		위의 약어들이 포함되어있을 가능성 높음. 해당 구조체 이름의 데이터가 다 넘어간다고 보면 될 듯.
+
+	#반환값 타입 함수명(...,struct 구조체 이름 (*ctx)){ 코드} ;
+		위에서의 파라미터 *ctx 는 구조 포인터.
+		ctx는 포인터를 인자로 하기 때문에 4바이트로 넘어가는 듯.
+		구조체에 대한 모든 멤버(선언 변수)가 넘어가는 듯.
+		struct 구조체 이름 *ctx는 값을 가지고 있을 때 : ctx를 받아오기 이전에 값이 지정되었을 거임. BPF에서는 이거일 확률이 높음.
+		(ctx가 값을 가지고 있지 않을 때 : 위의 함수의 코드에서 ctx에 대해 값을 선언해 줄거임.)<- 이건 아닌듯. 선언 안됨.
+		
+		https://sunandbean.tistory.com/215
+		
+		위의 link를 보면 	p.74 이해 가능.(구조체 포인터 매개변수 사용하기)
+		raw_tp가 트리거되면 bpf_raw_tracepoint_args에 값이 들어가도록 되어있을거임.
+		과정
+		SEC(raw_tp)통해서 hello함수를 섹션내에 정의할 수 있음->
+		raw_tp(raw_tracepoint)에서 struct bpf_raw_tracepoint_args [x]; 초기화 함.->
+		raw_tp에서 # ... = hello(&[x]); 이런 식으로 호출해줬을거임 ->  
+		int 함수 선언해준 int hello(struct bpf_raw_tracepoint_args *[x]){}함수 실행. 
+		
+
+3장 회고
+
+
+
+
+
+5장 예제
+https://github.com/lizrice/learning-ebpf/tree/main/chapter5
+
+
+
+
+5장---------------------------------------------------------------------------------------------------------p.99
+
+
+4장에서 strace 를 통해 보면 BTF(BPF Type Format) 먼저 로드 시키는걸 확인할 수 있었음.
+
+5장 첫페이지 읽어보기.
+
+toolchain 원하는 Target System(커널)의 소프트웨어 개발을 하기 위한 Host System의 Compile 환경
+compile 환경에서  target과 host가 다르면 크로스-컴파일 환경이라고 함.
+
+ BCC는 대상 시스템에서 런타임에 eBPF 코드를 컴파일하는 접근 방식이다. 이에는 여러 문제가 있다.
+1. 컴파일 도구 체인은 코드를 실행하려는 모든 대상 시스템과 커널 헤더 파일에 설치되어야 합니다.
+2. 도구가 컴파일되고 시작되기 전까지 몇초의 지연시간이 있다.
+3. 다수의 동일한 시스템에서 도구를 실행하는 경우 각 시스템에서 컴파일을 반복하는 것은 컴퓨터 자원을 낭비하는 것이다.
+4. ...
+
+python보다는 c나 go로 작성하는것이 좋다고 하는거같음.
+
+CO-RE 접근 방식은 eBPF 프로그램의 커널 간 이식성 문제에 대해 훨씬 더 나은 솔루션을 제공합니다.
+이식성 : 코드를 각 기계(각 컴퓨터)에 맞는 컴파일러로 해당 기계에 맞는 기계어로 바꾸는 것.
+
+
+
+개요  
+
+
+
+-----------------BTF
+https://docs.kernel.org/bpf/btf.html
+
+
+
+
+-----------------커널 헤더
+
+Linux 커널 소스 코드에는 사용하는 데이터 구조를 설명하는 헤더 파일이 포함되어 있으며, 이러한 헤더는 Linux 버전 간에 변경될 수 있다.
+eBPF 프로그램을 만들 때, 개별 헤더 파일을 포함하기를 선택할 수 있다.
+
+vmlinux.h =  실행 중인 시스템에서 커널에 대한 모든 데이터 구조 정보가 포함된 헤더 파일.
+
+
+
+
+-----------------컴파일러 지원 
+https://lists.llvm.org/pipermail/cfe-dev/2021-December/069635.html   llvm/clang 컴파일러
+
+clang 컴파일러는 -g 플래그를 사용하여 eBPF 프로그램을 컴파일할 때 커널 데이터 구조를 설명하는 BTF 정보에서 파생된 CO-RE 재배치라는 내용이 포함한다.(?)
+
+
+
+
+-----------------데이터 구조의 재배치를 위한 라이브러리 지원
+
+사용자 공간 프로그램이 eBPF 프로그램을 커널에 로드하는 지점에서 CO-RE 접근 방식은 해당 바이트코드를 조정해야한다.
+
+이는 컴파일될 때 존재한 데이터 구조와 실행될 대상 기계에서의 차이를 보상하기 위해 CO-RE 리로케이션 정보를 기반으로 한다.
+
+
+libbpf = 리로케이션 기능을 포함한 초기의 C 라이브러리. cilium에서는 go, Aya에서는 rust. 
+
+
+
+------------------BPF 스켈레톤?-------선택적.
+
+
+컴파일된 BPF 오브젝트 파일에서 스켈레톤을 자동으로 생성할 수 있습니다.
+이 스켈레톤에는 사용자 공간 코드가 BPF 프로그램의 라이프사이클을 관리하기 위해 호출할 수 있는 편리한 함수들이 포함되어 있습니다.
+이 함수들은 BPF 프로그램을 커널에 로드하고, 이벤트에 연결하는 등의 작업을 수행할 수 있는 고수준의 추상화입니다.
+C로 사용자 공간 코드를 작성하는 경우 bpftool gen skeleton을 사용하여 이러한 스켈레톤을 생성할 수 있습니다.
+이러한 함수들은 기본 라이브러리(libbpf, cilium/ebpf 등)를 직접 사용하는 것보다 개발자에게 더 편리한 추상화를 제공할 수 있습니다.
+
+
+일단 읽어만 보기.
+
+
+
+
+co-re 관련
+https://nakryiko.com/posts/bpf-portability-and-co-re/
+
+https://nakryiko.com/posts/libbpf-bootstrap/
+
+-----------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+----------------------------------------BTF----------------------------------------------------------------------
+
+
+
+
+BTF 정보는 데이터 구조와 코드가 메모리에 배치되는 방식을 설명한다.
+
+BTF에 대해 논의하는 주된 이유는 eBPF 프로그램이 컴파일된 위치와 실행될 위치 간의 구조 레이아웃 차이(?)를 알아내어 프로그램이 커널에 로드될 때 적절한 조정을 할 수 있기 때문에.
+
+레이아웃 -( int add( inta, intb) {};) 이런거인듯.
+
+
+
+구조가 어떻게 배치되어 있는지와 해당 구조에 있는 모든 필드의 유형을 알면 구조의 내용을 사람이 읽을 수 있는 형식으로 깔끔하게 인쇄할 수 있다.
+($ bpftool map dump id [id] --pretty 과같이)
+
+
+BPF 스핀 잠금(spin lock)에도 BTF 정보가 필요합니다.
+스핀 잠금은 두 개의 CPU 코어가 동일한 맵 값에 동시에 액세스하는 것을 방지하는 데 사용됩니다.
+
+커널 내 eBPF 프로그램은 bpf_spin_lock() 및 bpf_spin_unlock() 도우미 함수사용하여 spin lock 제어 가능.
+ 해시 또는 배열 맵 유형에서만 사용할 수 있으며 추적 또는 소켓 필터 유형 eBPF 프로그램에서는 사용할 수 없습니다.
+https://lwn.net/Articles/779120/
+
+
+------------------------------------btf 리스트 나열
+4장의 hello-buffer-config 예제가 실행되는 동안 이 명령을 실행함.
+
+
+	$ bpftool btf list       -    모든 btf 데이터 나열
+	btf _id :
+		size,
+		prog_id,
+		map_id,
+		pids - 15자로 축소됨. ($ bpftool prog show id [prog_id] 로 보면 pids 가 나옴.)
+
+
+p.104쪽을 보면 ($ bpftool prog show name hello) 내용을 보면 btf 출력과 prog 출력에서 map_id 가 다른것을 확인할 수 있음.
+btf 에서는 map_id= 103
+prog에서는 map_id =103, 104
+
+
+104는 perf_buff이며, perf_buff는 btf 정보를 사용하지 않아 다른것으로 확인 됨.
+
+
+
+
+
+--------------------------------btf유형(types)
+
+	
+	$ bpftool btf dump id [id] 
+		위의 명령을 이용하여 BTF정보를 알 수 있다.
+		이는 코드가 해석되어 프로그램에 구성되는 데이터 정보 유형 등을 볼 수 있는같음.p105
+
+
+Linux는 특정 길이의 정수를 명시적으로 정의하기 위해 u32 와 같은 유형을 정의합니다.
+이 시스템에서 u32는 부호 없는 정수에 해당합니다. 이를 참조하는 사용자 공간 코드는 __u32와 같이 밑줄이 앞에 붙은 동의어를 사용
+
+
+즉 데이터 타입 이 u32인 경우는 type_id가 2가 붙고,
+__u32인 경우에는 type_id가 3
+string? 이면 type_id 가 4
+char 면 type_id가 5
+array 면 type_id가 6
+int면 type_id가 7로 되는거 같음.
+포인터? type_id가 0인가...?
+매개 변수에 포인터가 들어가 있으면 type_id가 10?anonymous pointer
+
+encoding은 Signed인지 Unsigned인지.
+
+
+INT경우에는 미리 선언되어있는것?이므로 안되어있는 듯.
+
+(int x(...,...){}; 이런거면 type_id가 안붙는거같고,
+
+{
+u32 x;
+char y[];
+} 이런거면 각각 붙나.					p.106쪽 그림 보면서 이해.
+
+
+
+
+
+
+
+
+
+
+맵 같이 (구조체) 필드가 2개 이상이면 (key, value) offset이 있는 듯. p.107
+
+
+offset을 통해 32비트 띄어서 저장한다는거인듯.
+key필드가 32비트이기 때문에  0자리부터 32까지 key데이터 채우고,
+0에서 offset이 32인곳부터는   value데이터를 채운다는 의미인듯.
+
+C에서는 구조 필드가 경계에 자동으로 정렬되므로 한 필드가 항상 메모리에서 이전 필드 바로 뒤에 따른다고 할 수 없음.
+
+
+
+
+
+
+
+
+---------------------------------------------------------BTF정보가 포함된 맵(Maps with BTF Information)
+맵이 생성될 때 이 BTF 데이터가 커널에 어떻게 전달되는지
+
+$ strace -e bpf ./hello-buffer-config.py
+
+에서 bpf(BPF_MAP_CREATE) 시스템 호출을 사용하여 맵이 생성됨.
+
+https://elixir.bootlin.com/linux/v5.19.17/source/include/uapi/linux/bpf.h#L1273
+
+1273번째 줄에 나와있음.
+
+
+키와 값의 유형을 정의하는 BTF 정보를 추가로 전달함으로써 커널은 이를 내부적으로 조사할 수 있으며 앞서 설명한 대로 bpftool 과 같은 유틸리티는 예쁜 인쇄를 위한 유형 정보를 검색할 수 있다.
+
+키와 값에 대해 별도의 BTF_id가 전달된다는 점.
+방금 정의한 ____btf_map_config 구조 는 커널에서 맵 정의에 사용되지 않습니다. 이는 사용자 공간 측에서 BCC에 의해 사용된다.
+
+
+ BTF 정보 -키와 값의 유형을 정의하여 커널에 전달. 이를 내부적으로 조사할 수 있으며 앞서 설명한 대로 bpftool 과 같은 유틸리티는 예쁜 인쇄를 위한 유형 정보를 검색할 수 있음. 특징 separate BTF type _ids are passed in for the key and the value
+
+btf정보가 없는 perf_buff는 내부적으로 조사 불가하여 데이터값에 대한 확인 불가한가?(바로 끌어와 출력이 불가?)
+
+
+--------------------------------함수에 대한 BTF데이터
+bpftool btf dump id [id]
+
+BTF 데이터에는 함수 및 함수 프로토타입(FUNC)에 대한 정보도 포함됨.
+FUNC_PROTO를 보면
+vlen =x (매개변수를 하나만 받는다.) 그 뒤에 나오는게 매개변수와 매개변수 타입.
+
+
+
+
+
+
+------------------------------------------프로그램에 대한 BTF데이터
+bpftool btf dump prog <prog identity>
+
+
+https://manpages.ubuntu.com/manpages/jammy/man8/bpftool-btf.8.html
+
+
+
+-------------------------------------------------------------------------------------------------------
+
+
+
+
+-----------------------------BTF 	------------------------------------커널 헤더 파일
+
+
+
+
+
+bpftool btf list하면  데이터 blob표시됨.
+
+
+
+eBPF 프로그램에는 참조할 커널 데이터 구조 및 유형에 대한 정의가 필요
+
+전에는 커널 소스에서 여러개의 헤더파일에서 데이터 직접 구조체 정의를 찾아내야했지만.
+
+co_re가 도입되어 BTF가 활성화된 후로는 BTF정보를 이용하여 헤더파일을 생성하여 데이터 구조체에 대한 정의를 하는듯.
+
+
+
+예시) p.110
+vmlinux.h라고 하며 다음과 같이 bpftool을 사용하여 생성한다라고 되어있음.
+이 파일은 모든 커널 데이터 유형을 정의하므로 eBPF 프로그램 소스에이 생성된 vmlinux.h 파일을 포함하면
+필요한 모든 Linux 데이터 구조의 정의가 제공됨.
+
+커널의 BTF 정보와 빌드 시 BTF 정보 간의 차이를 고려하여, 이 차이를 사용자 공간에서 프로그램으로 조정이 되는듯.
+CONFIG_DEBUG_INFO_BTF=y가 켜져있어야 한다.
+
+https://github.com/aquasecurity/btfhub/blob/main/docs/btfgen-internals.md
+읽어볼 필요가 있을 수도.
+
+
+CO-RE를 지원하는 eBPF 프로그램을 BTF 정보가 없는 대상 머신에서 실행한다면, 해당 대상에 대한 BTF 데이터를 제공한다는 것 같음.
+
+core을 지원하는 eBPF프로그램이라는것이 그냥 eBPF와의 차이가 뭔지에 대해 아는게 중요할 듯.
+
+
+BTF enabled 프로그램 타입.
+raw tracepoint_btf(tp_btf)
+fentry/ fexit/ fmode_ret - 트램펄린 후킹?(nop)
+BPF LSM
+...
+https://nakryiko.com/posts/bpf-core-reference-guide/
+
+-----------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+-------------------------------------------CO-RE eBPF 프로그램 -----------------------p.111------------------------
+
+libbpf, btf 를 이용하여 eBPF프로그램의 한 번의 컴파일로 다양한 커널 버전에서 이식 가능하고 재배치 가능하도록 하는 개념.
+eBPF의 이식성은 코드 재배치에 의존성이 높다고 한다.
+
+
+C로 작성하고 libbpf 라이브러리와 함께 Clang을 사용한다고 가정
+
+
+
+vmlinux.h 파일은 설치된 커널에서 생성되므로 bpf 프로그램이 다른 커널 버전을 실행 중인 경우 다시 컴파일하지 않고 다른 시스템에서 실행하려고 하면 중단될 수 있다.
+ libbpf를 사용하면 "CO:RE"기능이 가능해진다.
+ vmlinux.h 에 정의된 유형에서 액세스하려는 필드를 분석하는 libbpf(예: BPF_CORE_READ )에 정의된 매크로가 있습니다.
+ 액세스하려는 필드가 실행 중인 커널이 사용하는 구조체 정의 내에서 이동된 경우 매크로/도우미가 이를 찾아줍니다.
+ 따라서 자신의 커널에서 생성한 vmlinux.h 파일을 사용하여 bpf 프로그램을 컴파일한 다음 다른 커널에서 실행해도 문제가 되지 않습니다 .
+
+https://nakryiko.com/posts/bpf-portability-and-co-re/
+
+
+
+
+vmlinux 상단에 preserve_access_index속성이 적용되어있다고 함.
+
+https://www.grant.pizza/blog/vmlinux-header/
+-----------------------------------------------------------------------------------------------------------------
+
+eBPF프로그램은 Clang 또는 gcc와 Rust 컴파일러로 바이트 코드로 컴파일됨.
+
+ libbpf 및 CO-RE를 사용하기 위해 C로 작성
+
+
+
+4장의   hello-buffer-cong.py    - bcc기반
+5장의  hello-buffer-cong.bpf.c - libbpf기반 
+이번 장에서는 5장꺼 다뤄서. bcc와 다른게 뭔지 
+
+
+(.lib, .a, .dll, .so) libbpf
+라이브러리 파일에는 헤더 파일에서 선언된 함수에 대한 정의가 포함
+
+
+include <> = 표준 헤더파일을 사용하겠다는 의미.
+		시스템의 특별한 위치에 존재, 개발 환경을 설치할 때 정해짐.
+
+include"" = 일반 헤더파일을 사용하겠다는 의미.
+		현재 디렉터리 기준으로 찾음
+
+
+https://blog.naver.com/0908f/222268600404
+
+
+#include "vmlinux.h" 
+
+커널 데이터 구조나 유형을 참조하는 eBPF 프로그램을 작성하는 경우 가장 쉬운 방법은 이 장의 앞부분에서 설명한 vmlinux.h 파일을 포함하는 것
+또는 linux/types.h를 포함해야함.
+
+vmlinux.h 파일은 커널 소스 헤더에서 유도되었지만 그들의 #define된 값을 포함하지는 않는다.
+[#define 대체할 문자 대체될 상수 ]
+따라서 이에대한 정의를 해야할 필요가 있다. 8장에서 다룸.
+
+libbpf의 헤더 파일을 사용자 공간 및 eBPF C 코드에서 모두 포함해야한다.
+요즘에는 eBPF프로그램을 작성할때 libbpf를 포함 하여야 한다. 이를 위해서는 libbpf를 서브모듈로 사용하기위해 소스에 빌드하고/ 설치 해야한다.
+
+libbpf를 사용하고 싶다면 libbpf/src 디렉터리에서 make install을 실행하면 된다.
+빌드된  eBPF프로그램을 실행할 수 있게 알맞은 위치에다가 복사하는 과정인듯.
+나중에는 linux 배포판에 사용되도록 일반화 될것이라고 함.
+
+
+
+사용자 공간과 커널 공간에서 사용되는 구조를 정의하는 어플리케이션 별 헤더파일을 갖는 것은 당연하다.(상호작용하기 위해서인듯.)
+지금 코드에서는 eBPF 프로그램에서 사용자 공간으로 이벤트 데이터를 전달하는 데 사용하는 data_t 구조를 정의했다.
+
+#include "hello-buffer-config.h"를 보면 알 수 있음.
+
+
+4장에서와 달리 data_t 구조는 path 라는 필드가 추가되었다는 것이다.  p.113
+이와 같이 구조 정의를 별도의 헤더파일로 가져오는 이유는 사용자 공간에서도 이를 참조하기 위해서이다.(어떻게?)
+BCC 버전에서는 커널과 사용자 공간 코드가 모두 단일 파일(hello-buffer-cong.py)에 정의되었고, BCC는 Python 사용자 공간 코드에서 구조를 사용할 수 있도록 뒤에서 몇 가지 작업을 수행했다.
+
+libbpf를 사용해 맵을 만들때는 아래와 같이 한다.(c)
+
+
+struct {
+ __uint(type, BPF_MAP_TYPE_HASH);
+ __uint(max_entries, 10240);
+ __type(key, u32);
+ __type(value, struct user_msg_t);
+} my_config SEC(".maps");
+
+__uint, __type는 아래 링크 통해 확인하기.
+https://elixir.bootlin.com/linux/v5.19.17/source/tools/lib/bpf/bpf_helpers.h
+
+
+
+
+bcc를 사용하지 않으므로  (BPF_HASH(config, u64, struct user_msg_t);}는 사용할 수 없다.
+맵이나 버퍼 같이 생성시 이름 붙이는 경우 다른 헤더파일의 이름과 충돌하지 않는지 확인.
+
+
+
+
+
+
+-------------------------------------------eBPF section.
+ELF =Excuteable and Linkable Format = linux, unix의 표준 바이너리 파일, 링커(?)를 거쳐 나온 실행 파일.
+\윈도우의 PE 파일이 Linux의 ELF파일과 같다고 보면된다고 한다.
+https://sonseungha.tistory.com/460
+
+생각
+{
+
+llvm으로 컴파일 할때 ELF 파일이 생성되는듯. (객체 파일의 형식이 ELF 인가?)
+.o와 .elf는 둘다 c프로그램을 컴파일할 때 사용되는 파일 형식임.
+.o는 단일 소스파일로 컴파일된 코드를 포함하지만 실행 가능한 형태가 아니라고함.
+.elf는 하나 이상의 객체 파일을 링크하여 생성된 실행 파일. 여러 객체 파일의 컴파일된 코드를 모두 포함하고 실행 가능하다.
+
+ LLVM은 프로그램 코드, 맵 설명, 재배치 정보 및 BTF 메타데이터를 포함하는 eBPF ELF 파일을 생성한다라고 적혀있음.
+https://ebpf.io/infrastructure/#llvm-compiler
+
+ELF 파일은 libbpf와 같은 eBPF 로더가 프로그램을 Linux 커널에 준비하고 로드하는 데 필요한 모든 정보를 제공한다. (btf와 다른점?)
+
+커널을 사용하기 전에는 BTF 정보를 확인.
+사용자 공간에서는 ELF 파일 시스템 형식으로 되어있는듯.
+
+즉 eBPF 프로그램을 작성하면 eBPF에 대한 ELF 파일이 생성되는데, 이 파일에는 eBPF를 만들 때의 ELF에 다양한 섹션정보가 만들어지는듯.
+
+이 섹션에는 BTF, map, 재배치 정보, 프로그램 코드(사용자가 정의해서 만든 섹션 포함) 등이 있을 거임.
+
+}
+
+예시
+
+#SEC("kprobe")
+kprobe라는 섹션을 생성하고, 이 섹션에 BPF_PROG_TYPE_KPROBE타입의 hello라는 이름의 eBPF 코드를 로드한다.
+
+프로그램 타입에 따라 섹션이름을 이용하여 연결될 이벤트를 지정할 수 있다.
+libbpf 라이브러리는 이 정보를 사용하여 사용자 공간 코드에서 자동으로 연결을 설정한다.
+
+
+
+#SEC("kprobe/__arm64_sys_execve")
+ARM기반 시스템의 execve syscall에 kprobe를 자동연결 한다는 뜻.
+kprobe섹션에는 eBPF가 로드되어 있으므로 해당 syscall에 트리거 될 거임.
+
+이를 위해서는 syscall을 알아야한다.시스템의 /proc/kallsyms 파일을 보고 알아내야 한다.
+하지만 libbpf를 사용하면 k(ret)syscall 섹션 이름으로 더 쉽게 할 수 있습니다.
+
+
+#SEC("ksyscall/execve")
+ eBPF 프로그램이 execve라는 syscall에 연결될거고, 그런다음에 프로그램 자체가 syscall에 연결될 것이다.
+
+
+
+
+
+https://libbpf.readthedocs.io/en/latest/program_types.html
+section에 들어가 eBPF코드 넣을 때 section에 따른 프로그램 타입 정의되어있음.
+
+
+
+
+
+sec(ELF Section Name) = 컴파일된 C언어 파일에서 해당 섹션을 정의하겠다.
+			 == ELF Section name / tracepoint의 entry에 해당 함수(객체= eBPF프로그램)를 추가(연결)하겠다는 의미인 듯
+				
+				#define SEC(NAME) __attribute__((section(NAME), used)); ---(bpf_helper.h)
+				 
+				
+		
+
+BPF_PROG(후크 파일 이름?,... ){};
+	#해당 섹션[sec(section name)]? tracepoint에 libbpf의 매크로( BPF함수로 선언)로 eBPF 집어넣음.
+
+
+BPF_KPROBE_SYSCALL(실행될 프로그램의 경로 이름, 프로그램 경로?){};	 #위와 마찬가지
+		#실행될 프로그램의 경로 이름 : eBPF프로그램 이름 or 파이썬(사용자 공간)에서 선언된 함수 이름 인거같음(이건 아닌거같기도).
+
+sec() 사용 시스템 호출 함수 예제 여러개 보면서 이해하기.
+https://velog.io/@haruband/eBPF-CO-RE-Compile-Once-Run-Everywhere-%EA%B8%B0%EB%8A%A5-%EB%B6%84%EC%84%9D
+
+
+char LICENSE[] SEC("license") = "Dual BSD/GPL";  : 프로그램이 커널에서 실행 될 수 있도록 라이센스 등록. (SEC()여기서는 =썻는데 ;;)
+
+
+
+
+
+p.114쪽 코드 분석.
+
+
+메모리를 복사하려면 BPF 도우미 함수를 사용해야 합니다.
+
+
+
+bcc버전과 달리 메세지 문자열을 message 문자열을 hello() 함수 내에서 지역 변수로 정의했다는 것입니다.
+BCC는 전역 변수를 지원하지 않습니다.
+
+
+BPF_KPROBE_SYSCALL매크로는 syscall에 이름이 지정된 모든 매개변수를 제공하도록 모든 작업을 처리합니다.
+이 경우 execve() syscall에 전달된 첫 번째 인자는 실행될 실행 파일의 경로를 가리키는 pathname 인자이다.
+
+여기서 ctx는 이름인듯.
+https://elixir.bootlin.com/linux/v5.19.17/source/tools/lib/bpf/bpf_tracing.h#L516
+
+
+
+
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+
+							CO_RE의 메모리 접근 
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+bpf_probe_read_... ()  BPF 도우미 함수를 통해 메모리에 제한된 액세스 권한을 가지고 있다.
+
+일반적으로 c에서는 포인터를 통해 메모리를 읽지만, eBPF에서는 검증기가 이를 단순히 허용하지 않는다.
+
+
+libbpf 라이브러리는 bpf_probe_read_*() 도우미 함수 주변에 CO-RE로 포장(wrappers)을 하여? BTF 정보를 활용하고 메모리 액세스 호출을 서로 다른 커널 버전에서 이식 가능하게 만듭니다. 
+
+https://github.com/libbpf/libbpf/blob/master/src/bpf_core_read.h#L245
+wrappers가 이런 뜻인듯.
+
+
+ bpf_core_read()는 bpf_probe_read_kernel() 을 직접 호출함.
+(bpf_core_read() == bpf_probe_read_kernel())
+
+p.117 이해 필요.Memory Access with CO-RE
+
+libbpf 라이브러리는 BPF_CORE_READ() 매크로를 제공하므로 모든 포인터 역참조에 대해 별도의 도우미 함수 호출이 필요하지 않고 한 줄에 여러 bpf_core_read() 호출을 작성할 수 있습니다 . 즉 함수 계속 쓸 필요 없이 하나만 쓰면 된다.
+코드 보기.
+
+https://nakryiko.com/posts/bcc-to-libbpf-howto-guide/#field-accesses
+
+
+
+
+
+
+
+
+
+------------------------------------------------------------------------------------------------------------------------------
+
+
+
+						co-re eBPF 프로그램 컴파일
+
+
+
+pt_regs = CPU 레지스터 내용의 복사본을 보유함. pt_regs 구조 정의는 실행 중인 아키텍처(arm64, amd64 등)에 따라 다름.
+		매크로를 사용하지 않은 경우 kprobe에 대한 레지스터 정보에 액세스하려면 아키텍처별 코드가 필요
+		
+
+makefile을 이용해 co-re객체를 컴파일 하려면  *.o파일로 만들 수 있어야 함.
+
+
+
+
+
+--------------------BTF재배치
+커널 버전과 데이터 구조가 다른 머신(시스템 환경?)에서 실행 되도록 하는 것.
+
+
+libbpf 라이브러리는 eBPF 프로그램이 실행되는 대상 커널의 데이터 구조 레이아웃과 작동하도록 조정
+
+https://elixir.bootlin.com/linux/v5.19.17/source/include/uapi/linux/bpf.h#L6711
+
+CO-RE 재배치 데이터는 재배치가 필요한 각 명령어에 대해 이러한 구조체 중 하나로 구성된다.
+
+
+
+
+커널 데이터 구조에 대한 재배치 데이터는 Clang에 의해 자동으로 생성되고 ELF 개체 파일에 인코딩된다.
+vmliux.h에 정의된 모든 유형을 커널 데이터 유형에 맞추어 재배치?하고 정보를 생성? p.121
+
+
+
+
+$ bpftool -d prog load hello.bpf.o /sys/fs/bpf/hello
+객체파일을 로드할 때 재배치가 일어나는 것을 볼 수 있음.
+
+
+
+
+
+---------------------------------------사용자 공간을 위한 LIBBPF라이브러리
+사용자 공간에서 코드 작성하는경우 필요한 libbpf 라이브러리.
+
+프로그램을 커널에 로드하고 이벤트에 연결하거나 사용자 공간에서 지도 정보에 액세스하는 것과 같은 작업을 수행하기 위해 bpf() 와 같은
+ syscall을 래핑하는 함수를 제공
+
+
+이러한 추상화를 사용하는 가장 일반적이고 쉬운 방법은 자동 생성된 BPF 스켈레톤 코드를 이용 하는것임.
+
+----------------------------------BPF 스켈레톤
+
+bpftool을 사용하면 다음과 같이 ELF 파일 형식의 기존 eBPF 객체에서 이 스켈레톤 코드를 자동 생성할 수 있습니다.
+
+$ bpftool gen skeleton hello-buffer-config.bpf.o > hello-buffer-config.skel.h
+
+eBPF 프로그램 및 맵의 수명주기를 관리
+
+스켈레톤 코드, 헤더가  뭔지 더 보기.   								p.122
+
+스켈레톤 코드를 사용할 필요는 없지만, 자동 생성된 코드를 사용하면 일반적으로 입력 시간이 절약
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

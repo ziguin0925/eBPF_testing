@@ -1,0 +1,85 @@
+go run -exec sudo [./kprobe, ./uretprobe, ./ringbuffer, ...]
+
+
+---------------------------------------cgroup_skb  : 출력 o
+"cgroup_skb/egress"
+이그레싱 
+
+
+---------------------------------------fentry  : 출력 o
+"fentry/tcp_connect"
+
+
+
+
+---------------------------------------headers : 
+xdp에 쓰이는 헤더 
+
+
+
+---------------------------------------kprobe : 출력 o
+ "kprobe/sys_execve"
+
+
+
+
+---------------------------------------kprobe_percpu : 출력 o
+"kprobe/sys_execve"
+
+
+
+
+---------------------------------------kprobepin : 출력 o
+"kprobe/sys_execve"
+
+
+
+
+
+
+---------------------------------------map_in_map
+
+
+---------------------------------------ringbuffer : 출력 o
+
+"kprobe/sys_execve"
+
+
+
+
+---------------------------------------tcprtt : 출력 o
+
+"fentry/tcp_close"
+
+
+
+
+
+---------------------------------------tcprtt_sockops : 출력 o
+
+"sockops"
+
+
+
+---------------------------------------tracepoint_in_c : 출력 o
+
+"tracepoint/kmem/mm_page_alloc"
+
+
+
+---------------------------------------tracepoint_in_go : 출력 o
+c코드 짜지 않고 go의 ebpf.NewProgram이라는 API 사용하여 eBPF 프로그램 사용.
+123 0 0 0?
+
+
+---------------------------------------uretprobe : 출력 o
+"uretprobe/bash_readline"
+터미널에 친 명령어 읽고 반환
+
+
+
+---------------------------------------xdp 안됨
+"xdp"
+
+
+

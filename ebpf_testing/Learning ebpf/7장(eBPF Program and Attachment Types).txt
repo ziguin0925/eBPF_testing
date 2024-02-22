@@ -1,0 +1,127 @@
+ctx : 포인터로서 있음. 타입에 따라 다름. 
+
+
+------------BPF Kernel Functions(kfuncs)
+커널 내부 함수를 BPF프로그램에서 사용할 수 있도록한 함수.***
+
+적합한 context안에서만 내장커널함수,kfuncs를 부를 수 있다.
+helper function과 달리 kfuncs는 이식성 고려해야됨(커널 버전 등)
+
+"core" kfuncs(이식성 고려하지 않아도 되는 kfuncs)
+
+https://oreil.ly/06qoi - kfuncs 만들거나 사용하는법.
+RCU(read-copy-update)
+
+
+----------------------------------------tracing(perf) 프로그램
+do_execve - 커널 함수
+execve -syscall
+
+커널 함수에서 불러온 인자는 bpf_probe_read_kernel을 통해 읽어야함.
+syscall로 불러온 인자들은 bpf_probe_read_user를 통해 읽어야함.
+
+커널 함수 인자값과 syscall 인자 값이 다름.
+n 번째 인자값을 가지고 싶다면 n번째 까지 인자 값을 받을 수 있도록 설정해 줘야함.
+
+
+----------------------------------------kprobe(p.148)
+kprobe/syscall/sys_execve = syscall
+kprobe/do_execve =커널 내 함수.
+
+
+
+ksyscall 은 syscall에 대해서만
+kprobe는 syscall과 커널 함수 다 가능.
+(커널 함수는 noninlined function in the kernel에 대해서만 가능.)
+
+sudo bpftool perf show을 통해 확인
+entry - kprobe (offset =0)
+exit - kretprobe (offset = 0) 
+
+
+커널이 컴파일 될때 특정 커널 함수를 호출 함수에 인라인 시킬 수도 있다.
+특정 커널 함수가 다른 커널 함수에 인라인되면 특정 커널 함수에 kprobe를 연결할 수 없다.
+
+ 
+do_execve라는 커널 함수가 다른 커널 함수에 인라인 되는 경우에는 kprobe가 탐색을 못한다고 함.
+
+
+offset 옵션을 변경하여 부착 할 수 있는듯.
+https://github.com/cilium/ebpf/blob/365d07f530e5641a7fbeb3d487a692320891f776/link/kprobe_test.go#L56
+
+
+
+
+
+------------------------fentry/ fexit
+BPF trampoline의 아이디어
+
+kprobe와 달리 entry와 exit에 부착하는데 오버헤드가 잘 안걸림.
+커널 함수에 대해서 선호되는 방식.
+
+kretprobe는 entry의 인자값에 접근하지 못하지만, fexit은 entry의 인자값에 접근할 수 있다.
+https://github.com/libbpf/libbpf-bootstrap/blob/master/examples/c/fentry.bpf.c
+
+
+
+
+
+
+
+
+--------------------------uprobe
+
+사용자 공간 코드에 대한 추적점 부착 가능.
+e.g. 
+    Learning eBPF book p.157 or pdf p.177
+
+
+
+--------------------------tracepoint
+커널 코드에 명시되어있음.
+커널 코드에 명시되어 있는 곳에만 부착 가능.
+
+추적 가능 지점.
+sudo cat /sys/kernel/tracing/available_events | grep [원하는 추적 지점]
+
+인자값 확인.
+sudo cat /sys/kernel/tracing/events/syscalls/sys_enter_execve/format
+(common이라고 적힌 값에는 접근 불가.)
+
+커널이 바뀌어도 커널에서 tracepoint 확인 가능.?
+
+SEC("tp/tracing subsystem/tracepoint name")  ---> SEC("tp/syscalls/sys_enter_execve")
+tracepoint -> tp
+tracepoint에서의 인자값은 raw argument에 의해 지정된 구조로 eBPF프로그램에 넘겨짐.
+
+
+인자를 받아올 때 인자 타입이 달라 못받아 올수도 있음. 
+vmlinux.h를 통해 알맞은 context structure로 받아 올 수 있음.
+SEC("tp_btf/tracepoint name") 
+
+
+
+----예시(sched_process_exec)
+
+SEC("tp_btf/sched_process_exec")
+int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
+
+섹션은 tp_btf/ ....
+구조체 이름에 trace_event_raw_[추적 지점 이름] *ctx로 해줘야함.
+
+
+
+
+------------------------------raw_tracepoint
+raw_tracepoint -> raw_tp
+
+커널 내부 인자값(kernel internal argument) 에 대해 원시적인 폼으로 접근 가능.
+no abi guarantees to what the tracepoints arguments are and what their meaning is.
+bpf_probe_read를 통해 해당 구조체(인자값)에 접근하고, 원시적인 폼에 대한 적절한 type cast가 필요.
+
+
+
+
+
+
+

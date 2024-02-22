@@ -1,0 +1,77 @@
+on:
+  workflow_call:
+    inputs:
+      architecture:
+        required: true
+        type: string
+        description: Architecture string, for example aarch64
+      runner:
+        required: true
+        type: string
+        description: The runner to execute the build on, for example ubuntu-latest
+      kernels:
+        required: true
+        type: string
+        description: Stringified JSON string of kernels, for example '[ "debian", "fedora" ]'
+
+jobs:
+  test-kernel:
+    name: Kernel
+    strategy:
+      fail-fast: false
+      matrix:
+        kernel_flavor: ${{ fromJSON(inputs.kernels) }}
+    runs-on: ${{ inputs.runner }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Install packages needed for testing
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu \
+        libc6-dev-arm64-cross \
+        libcap-dev \
+        parallel \
+        qemu-system-x86 \
+        qemu-system-arm \
+        qemu-user-static
+      env:
+        DEBIAN_FRONTEND: noninteractive
+    - name: Get Env
+      run: echo "ELASTIC_EBPF_VERSION=$(cat VERSION)" >> $GITHUB_ENV && echo "PWD=$(pwd)" >> $GITHUB_ENV
+    - name: Download Build Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: elastic-ebpf-${{ inputs.architecture }}
+        path: ${{ env.PWD }}/artifacts
+    - name: Untar
+      run: cd artifacts && tar -zxf elastic-ebpf-${ELASTIC_EBPF_VERSION}-SNAPSHOT.tar.gz
+    - name: Install Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.17'
+    - name: Run tests
+      run: make run-multikernel-test IMG_FILTER=${{ matrix.kernel_flavor }} ARCH=${{ inputs.architecture }} ARTIFACTS_PATH=${PWD}/artifacts
+    - name: Prepare for archival
+      if: always()
+      run: |
+        mv testing/bpf-check-summary.txt results-${{ matrix.kernel_flavor }}-${{ inputs.architecture }}.txt || true
+        mkdir -p logs && mv testing/results logs/${{ matrix.kernel_flavor }}-${{ inputs.architecture }}
+    - name: Archive test summary
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: result-summary
+        path: results-${{ matrix.kernel_flavor }}-${{ inputs.architecture }}.txt
+    - name: Archive individual test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: logs
+        path: logs
+    - name: Print summary
+      if: always()
+      run: |
+        echo "Summary results for ${{ matrix.kernel_flavor }}-${{ inputs.architecture }}" >> $GITHUB_STEP_SUMMARY
+        cat results-${{ matrix.kernel_flavor }}-${{ inputs.architecture }}.txt | grep "FAIL\|PASS" | sed s/FAIL:/:x:/g | sed s/PASS:/:white_check_mark:/g >> $GITHUB_STEP_SUMMARY

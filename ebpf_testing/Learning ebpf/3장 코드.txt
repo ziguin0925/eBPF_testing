@@ -1,0 +1,154 @@
+struct bpf_insn {
+ __u8 code; /* opcode */  MOV, ADD같은거
+ __u8 dst_reg:4; /* dest register */ 
+ __u8 src_reg:4; /* source register */
+ __s16 off; /* signed offset */ 명령어당 1씩 증가.(16바이트이면 2씩 증가.)
+ __s32 imm; /* signed immediate constant */
+};
+
+
+
+예시 
+# 5: b7 02 00 00 0f 00 00 00 r2 = 15
+
+b7 = opcode(0xb7)
+02 = 에서 앞에 0은 src(source register)
+	뒤이 2는 dst(destination)
+00 00 = offset
+0f 00 00 00 = operand( 0f 이므로 15)
+
+
+예시 2
+# 9: 63 16 00 00 00 00 00 00 *(u32 *)(r6 + 0) = r1
+opcode = 0x63
+레지스터 1(src)과 레지스터 6(dst)을 쓰겠다.
+offset= 0
+operand =0
+
+
+
+
+$ bpftool prog load hello.bpf.o /sys/fs/bpf/hello
+객체 파일을 해당 경로에 로드시켜라.(파일 시스템 고정) 
+
+$ bpftool prog list
+현재 실행되고 있는 프로그램 목록.
+
+$ bpftool prog show id [id]
+해당 id값에 해당하는 프로그램 정보 요청.
+
+$ bpftool prog dump xlated name hello 
+검증기를 통과한 후의 바이트 코드 요청.
+
+
+$ bpftool prog dump jited name [name]
+JIT컴파일 된거를 바이트로 보여준다고 하니 디어셈블된듯.
+바이트 코드로 JIT complied된 파일을 디어셈블한 뒤 보여줌.
+
+
+
+
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+https://github.com/lizrice/learning-ebpf/blob/main/chapter3/hello.bpf.c
+
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
+
+int counter = 0;
+
+1: SEC("xdp")		#xdp 섹션과 연결
+2: int hello(struct xdp_md *ctx) {
+3:     bpf_printk("Hello World %d", counter);
+4:     counter++; 
+5:     return XDP_PASS;
+    }
+
+6: char LICENSE[] SEC("license") = "Dual BSD/GPL";
+
+
+----------------------------------------------------
+
+
+
+1:SEC("xdp")
+
+#define SEC(NAME) __attribute__((section(NAME), used))
+https://elixir.bootlin.com/linux/v5.4.170/source/tools/testing/selftests/bpf/bpf_helpers.h#L9
+
+
+
+2: struct xdp_md *ctx
+
+struct sk_msg_md {
+	__bpf_md_ptr(void *, data);
+	__bpf_md_ptr(void *, data_end);
+
+	__u32 family;
+	__u32 remote_ip4;	/* Stored in network byte order */
+	__u32 local_ip4;	/* Stored in network byte order */
+	__u32 remote_ip6[4];	/* Stored in network byte order */
+	__u32 local_ip6[4];	/* Stored in network byte order */
+	__u32 remote_port;	/* Stored in network byte order */
+	__u32 local_port;	/* stored in host byte order */
+	__u32 size;		/* Total size of sk_msg */
+};
+https://elixir.bootlin.com/linux/v5.4.170/source/include/uapi/linux/bpf.h#L3161
+
+3: bpf_printk("Hello World %d", counter);
+#define bpf_printk(fmt, ...)				\
+({							\
+	char ____fmt[] = fmt;				\
+	bpf_trace_printk(____fmt, sizeof(____fmt),	\
+			 ##__VA_ARGS__);		\
+})
+
+int bpf_trace_printk(const char *fmt, ...)
+ Trace_pipe(/sys/kernel/debug/tracing/trace_pipe)에 대한 printf()용 간단한 커널 기능
+ trace_pipe를 cat 명령어로 출력하면 나온다고함.
+https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#1-bpf_trace_printk
+
+
+
+5: return XDP_PASS;
+리턴 타입인 XDP_PASS에 의해 커널 network stack으로 패킷을 보내게 됩니다.
+
+
+
+
+--------------------------------------------------------------------------------------------------------------------------------
+
+https://github.com/lizrice/learning-ebpf/blob/main/chapter3/hello-func.bpf.c
+
+-----------------------------------------------------hello-func.bpf.c
+
+
+
+
+
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
+
+1: static __attribute((noinline)) int get_opcode(struct bpf_raw_tracepoint_args *ctx) {
+      return ctx->args[1];
+  }
+
+SEC("raw_tp/")
+int hello(struct bpf_raw_tracepoint_args *ctx) {
+    int opcode = get_opcode(ctx);				#int get_opcode(unsigned char *addr, unsigned int *opcode)
+							#https://elixir.bootlin.com/linux/v5.19.17/source/arch/x86/mm/pf_in.c#L103
+    bpf_printk("Syscall: %d", opcode);
+    return 0;
+}
+
+char LICENSE[] SEC("license") = "Dual BSD/GPL";
+
+----------------------------------------------------------
+
+1: 
+함수 호출 지점에서 함수 인라인을 억제
+
+https://velog.io/@emplam27/C%EC%96%B8%EC%96%B4-%EB%A7%A4%ED%81%AC%EB%A1%9C-%EC%9D%B8%EB%9D%BC%EC%9D%B8-%ED%95%A8%EC%88%98

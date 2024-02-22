@@ -1,0 +1,243 @@
+https://github.com/lizrice/learning-ebpf
+
+---------------3장 p.57
+6개보다 많은 인자를 요구하는 함수 호출은 불가능합니다(애초에 인자가 6개보다 많은 함수는 helper 함수로 등록도 불가능합니다).
+
+https://www.bhral.com/post/linux-kernel-bpf-%EC%8A%A4%ED%84%B0%EB%94%94-%EB%85%B8%ED%8A%B8
+
+과정    :         c언어 -> 바이트 코드 -> 기계어(x86_64)
+eBPF는 general purpose RISC instruction set임.
+인터프리터 ( 원래 BPF는 인터프리터로 runtime 바이트코드 인터프리터 였으나 , JIT통해서 컴파일러로 바뀜?)
+기존의 커널함수가 필요할 때 Helper Function을 통해서만 호출하자.
+
+
+eBPF 가상 머신 :eBPF 가상 머신은 다른 가상 머신과 마찬가지로 컴퓨터의 소프트웨어 구현
+		. eBPF 바이트코드 명령어 형식의 프로그램을 사용, CPU에서 실행되는 기본 기계 명령어로 변환되어야 한다.
+		초기에는 eBPF 프로그램이 실행될 때마다 커널은 명령어를 검사하고 이를 기계어 코드로 변환한 다음 실행함.
+		이러한 해석은 성능상의 이유와 eBPF 해석기의 일부 Spectre 관련 취약점을 피하기 위해 대부분 JIT (just-in-time) 컴파일로 대체됨.
+		 컴파일은 프로그램이 커널로 로드될 때 한 번만 발생하며 (네이티브) 기계어 명령으로 변환됩니다.
+
+{
+BPF는 RISC machine은 11개의 64bit register, pc, 512byte의 스택으로 구성된다. 레지스터들은 r0-r10과 같은 이름을 가집니다.
+r10 레지스터는 read-only 레지스터이며, BPF stack frame ponter 주소를 저장하고 있습니다. 남은 r0-r9 레지스터는 general purpose이며 read/write 가능합니다. 범용 레지스터들의 사용처는 다음과 같습니다.
+
+
+r0: BPF 프로그램 종료 시에 종료 코드를 저장한다. 
+
+r1-r5: scratch 레지스터이다. BPF 프로그램이 시작할 때, r1 레지스터에 context를 저장하고 있다.
+
+
+BPF calling convention
+BPF 프로그램은 미리 정의된 helper 함수들만 호출할 수 있습니다. BPF의 calling convention은 아래와 같습니다.
+
+r0: helper 함수로부터의 리턴 값을 저장한다.
+
+r1-r5: BPF 프로그램이 helper 함수를 호출할 때 필요한 인자들을 저장한다.
+
+r6-r9: callee saved register
+}
+
+
+커널에 로드되면 eBPF 프로그램의 바이트코드는 일련의 bpf_insn 구조로 표시
+ {   bpf_insn 구조의 길이는 64비트(또는 8바이트), 8바이트를 초과할 경우 와이드 명령어 인코딩 (16byte)  }
+ bpf_insn 구조체가 하나의 BPF 명령어를 표현하는 구조체이다.
+	명령어의 종류를 의미하는 (opcode),
+	필드와 원본 레지스터(src_reg),
+	목적 레지스터(dst_reg),
+	그리고 (off / imm) 상수 필드   로 구성되어 있다. (5개)
+
+
+bpf_printk() : bcc 버전
+bpf_trace_printk() : libbpf 버전      (  https://nakryiko.com/posts/bpf-tips-printk/  )
+git 에서 찾아보면 두개 다 잘 쓰이는 것으로 판단됨.
+
+https://docs.cilium.io/en/latest/bpf/toolchain/#llvm
+
+
+
+
+
+
+
+
+
+
+
+
+
+-------------------------------------------------------------1. LLVM clang으로 c언어 bytecode로 컴파일
+
+          https://llvm.org/docs/GettingStarted.html#getting-the-source-code-and-building-llvm
+
+ELF (Executable and Linkable Format): ELF는 리눅스와 유닉스 운영체제에서 사용되는 실행 가능한 형식의 바이너리 파일. ELF 파일은 컴파일된 프로그램의 코드, 데이터 및 기타 정보를 포함하며, 여러 가지 섹션으로 구성됨. ELF 파일은 실행 파일 또는 공유 라이브러리 파일로 사용됨.
+
+
+
+$ llvm-objdump -S hello.bpf.o             (바이트 코드 확인)
+
+
+(llvm, clang 명령어 써보기)-(llvm-project다운해도 잘 안됨 make? 뭐 더 해야되는거같은데 )
+p.63 디스어셈블리(바이트 코드) 확인 가능; (기계어에서 바이트 코드로 dump)
+
+opcode 확인 : https://github.com/iovisor/bpf-docs/blob/master/eBPF.md
+p.63에서 오프셋 0에서 시작해서 2가 된 이유 적혀있음(16바이트 이므로) 
+
+
+
+
+
+
+
+-----------------------------------------------------------------2. 커널에 프로그램 로드 
+
+ 예시 ) 	bpftool을 사용하여 프로그램을 커널에 로드,
+	$ bpftool prog load [저장할 객체 파일(*.o)] [파일이 저장될 위치]
+
+
+
+-------로드된 프로그램 검사
+
+$ bpftool prog list                     -커널에 로드된 모든 프로그램 나타내는듯(eBPF포함하여)  ([--pretty] 넣으면 JSON형식) 
+	or
+$ bpftool prog show id 540 --pretty    ( JSON 형식 )
+	or
+$ bpftool prog show [옵션?(id = *** 와 같이)]    
+...
+
+
+
+
+
+
+----------검증(verifier) 통과 후의 eBPF 바이트 코드
+
+$bpftool prog dump xlated name hello
+
+
+($ llvm-objdump -S hello.bpf.o ) 이거 했을 때랑 거의 비슷한데 위의 명령으로 바이트 변환한게 더 보기 쉬운듯
+
+
+
+
+
+
+
+
+
+
+
+-------------------------------------------------------3. JIT(just in time) compiler로 기계어로 전환
+
+바이트 코드는 매우 낮은 수준이지만 기계어는 아니라 JIT를 통해 컴파일 시켜줘야됨.
+대부분의 eBPF 프로그램은 JIT컴파일 됨.
+
+$ bpftool prog dump jited id [program_id]
+	or
+$ bpftool prog dump jited name [program_name]
+...
+ 
+출력에서는 어셈블리어로 된 JIT 코드가 표시된다.
+
+
+
+
+
+
+(clang,llvm은 잘 모르겠음객체 파일이 어디에 있는지, 어떻게 생성하는지 ...)
+(실행 시키고 있을 때 확인해야 할 듯) 터미널 하나로 실행시키고, 새 터미널 열어서 위의 명령어(bpftool)들 실행하면 보임.
+
+
+
+
+
+-----이벤트 연결된거 확인
+
+$ bpftool net list  ---- 네트워크 이벤트에 연결된 모든 프로그램 확인
+
+
+
+$ bpftool prog tracelog ---- 모든 프로그램의 추적 출력? 하는 듯.
+		# 한 터미널은 python3 로 실행하고, 한 터미널은 bpftool prog tracelog, 한터미널은 명령어 입력해보면 확인 가능.
+
+
+
+
+
+------------ 맵 확인 
+eBPF 실행중에 (맵을 생성하는 eBPF코드로 돌릴 것! 버퍼도 map list 통해서 있다는 확인 가능하지만 dump시 값 확인 안됨.)
+
+해당 eBPF 프로그램이 bpftool prog 으로 맵id를 뭐로 가지는지 확인      or        맵 이름 뭐로 정해줬는지 인지하기
+
+$ bpftool map list           ( 맵이름 알고있다면 안해도 될듯.)
+
+$ bpftool map dump name [map name]확인 (id 도 가능)
+
+
+
+bpftool은 BTF 정보가 사용 가능한 경우에만 맵(여기서는 변수 이름 카운터)에서 필드 이름을 보기 좋게 인쇄할 수 있으며 해당 정보는 -g 를 사용하여 컴파일하는 경우에만 포함됩니다.(p.62을 통해 확인 가능)
+컴파일 단계에서 해당 플래그(-g)를 생략하면 제한되어 표시된다.(p.72 통해 확인 가능)
+
+python으로 eBPF프로그램 로드하면 -g 플래그 넣는듯.
+
+
+eBPF프로그램에서 buff만 선언 했을 때  bpftool prog list 로 확인하면 해당 프로그램에 'map_id'가 부여 됨.
+map list에도 버퍼 map list id 로 확인 가능 하지만 type이 다름
+chapter 2의 hello_map.py로 했을 때  type 'hash'
+chapter 2의 hello_buffer.py 로 했을 때 type 'perf event array'
+
+버퍼도 맵인지? 맵은 아닌거 같던에 value 가 안나타남. 키도 같은값임. 버퍼라 저장을 안해서? btf 정보 확인해보기(btf_id있는지)
+
+
+
+... 밑에 bpftool 참조 확인
+
+
+
+
+
+syscall에 대한 opcode를 추적
+hello-func.bpf.c
+
+
+__attribute__(())  -- SEC()과 관련있음 
+__attribute__(()) 특별한 속성 부여 가능. 
+https://gcc.gnu.org/onlinedocs/gcc-4.6.1/gcc/Function-Attributes.html#Function-Attributes
+
+
+
+
+
+{
+
+
+-----------------------------------------btf 확인 내용 sec()사용 (co-re)
+https://velog.io/@haruband/eBPF-CO-RE-Compile-Once-Run-Everywhere-%EA%B8%B0%EB%8A%A5-%EB%B6%84%EC%84%9D
+
+------------------------------실행 파일 로딩 과정 분석 (메모리 재배치)
+https://velog.io/@haruband/eBPF-BPF-%EC%8B%A4%ED%96%89%ED%8C%8C%EC%9D%BC-%EB%A1%9C%EB%94%A9-%EA%B3%BC%EC%A0%95-%EB%B6%84%EC%84%9D-%EB%A9%94%EB%AA%A8%EB%A6%AC-%EC%9E%AC%EB%B0%B0%EC%B9%98
+
+https://velog.io/@haruband/eBPF-BPF-%EC%8B%A4%ED%96%89%ED%8C%8C%EC%9D%BC-%EB%A1%9C%EB%94%A9-%EA%B3%BC%EC%A0%95-%EB%B6%84%EC%84%9D-JIT
+
+
+------------------------------------------linux terminal command - bpftool prog 참조
+
+https://manpages.ubuntu.com/manpages/focal/en/man8/bpftool-prog.8.html
+
+https://github.com/torvalds/linux/blob/master/tools/bpf/bpftool/Documentation/bpftool-prog.rst
+
+
+-----------------------------------------------linux terminal command - bpftool 참조
+
+https://github.com/torvalds/linux/tree/master/tools/bpf/bpftool/Documentation
+
+
+---------------------------------------------------libbpf(bpf) 헤더
+
+https://github.com/libbpf/libbpf/tree/20c0a9e3d7e7d4aeb283eae982543c9cacc29477/src
+
+
+https://github.com/torvalds/linux/tree/master/Documentation/bpf   설명
+
+
+
+}

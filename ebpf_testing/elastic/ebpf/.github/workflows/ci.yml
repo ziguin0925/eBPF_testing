@@ -1,0 +1,60 @@
+name: GITHUB ACTIONS CI
+
+on:
+  push:
+    branches:
+    - main
+    - "[0-9]*.[0-9]*"
+  pull_request:
+    branches:
+    - main
+    - "[0-9]*.[0-9]*"
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-x86_64:
+    name: Platform (x86_64)
+    uses: ./.github/workflows/build.yml
+    with:
+      architecture: x86_64
+      runner: ubuntu-latest
+    secrets: inherit
+  build-aarch64:
+    name: Platform (aarch64)
+    uses: ./.github/workflows/build.yml
+    with:
+      architecture: aarch64
+      runner: ubuntu-latest
+    secrets: inherit
+  multikernel-tester-x86_64:
+    name: Test (x86_64)
+    needs:
+      - build-x86_64
+    uses: ./.github/workflows/multikernel-tester.yml
+    with:
+      architecture: x86_64
+      runner: ubuntu-latest
+      kernels: '[ "amazonlinux2", "centos", "debian", "fedora", "mainline", "rocky", "ubuntu-aws", "ubuntu-azure", "ubuntu-gcp", "ubuntu-gke", "ubuntu-oem", "ubuntu-oracle" ]'
+    secrets: inherit
+  multikernel-tester-aarch64:
+    name: Test (aarch64)
+    needs:
+      - build-aarch64
+    uses: ./.github/workflows/multikernel-tester.yml
+    with:
+      architecture: aarch64
+      runner: ubuntu-latest
+      kernels: '[ "amazonlinux2", "debian", "fedora", "mainline", "rocky", "ubuntu-aws", "ubuntu-azure", "ubuntu-gcp", "ubuntu-gke", "ubuntu-oracle" ]'
+    secrets: inherit
+  merge-auditor:
+    name: CI Merge Auditor
+    needs:
+      - multikernel-tester-x86_64
+      - multikernel-tester-aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate results
+        run: echo "Result - PASS"

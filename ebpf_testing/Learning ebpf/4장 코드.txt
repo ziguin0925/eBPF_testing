@@ -1,0 +1,168 @@
+#!/usr/bin/python3  
+# -*- coding: utf-8 -*-
+
+from bcc import BPF
+import ctypes as ct                                              #ctypes는 파이썬용 외부 함수(foreign function) 라이브러리, C 호환 데이터형을 제공
+
+program = r"""
+struct user_msg_t {
+   char message[12];
+};
+
+BPF_HASH(config, u32, struct user_msg_t); #BPF_HASH(name [, key_type [, leaf_type [, size]]])
+					  #기본값:BPF_HASH(name, key_type=u64, leaf_type=u64, size=10240)
+
+
+BPF_PERF_OUTPUT(output);  		#BPF_PERF_OUTPUT(name)
+					#성능 링 버퍼를 통해 사용자 정의 이벤트 데이터를 사용자 공간으로 푸시하기 위한 BPF 테이블을 생						성합니다. 이는 이벤트별 데이터를 사용자 공간으로 푸시하는 데 선호되는 방법입니다
+					#테이블로 푸시됩니다 events.perf_submit()
+					#BPF_PERF_OUTPUT은 네트워킹 프로그램에 사용 가능
+struct data_t {     
+   int pid;
+   int uid;
+   char command[16];
+   char message[12];
+};
+
+int hello(void *ctx) {
+   struct data_t data = {}; 
+   struct user_msg_t *p;
+   char message[12] = "Hello World";
+
+   data.pid = bpf_get_current_pid_tgid() >> 32;      # u64 bpf_get_current_pid_tgid(void)
+						     # 상위32bit는 프로세스 하위 32bit는 쓰레드 ID	
+
+   data.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF; #상위 32bit는 그룹 아이디.
+
+   bpf_get_current_comm(&data.command, sizeof(data.command));      #bpf_get_current_comm(char *buf, int size_of_buf)
+								   # 첫 번째 인수 주소에 현재 명령어 값을 저장
+
+   p = config.lookup(&data.uid);
+   if (p != 0) {
+      bpf_probe_read_kernel(&data.message, sizeof(data.message), p->message); 
+				 #long bpf_probe_read_kernel(void *dst, u32 size, const void *unsafe_ptr)
+				#커널 주소 공간 BPF스택에 바이트 사이즈 저장.
+				#모든 커널 메모리는 bpf_probe_read_kernel() 지나야 한다.
+				#자동으로 일어남.https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#1-kprobes
+
+
+
+
+   } else {
+      bpf_probe_read_kernel(&data.message, sizeof(data.message), message); 
+   }
+
+   output.perf_submit(ctx, &data, sizeof(data));    # int perf_submit((void *)ctx, (void *)data, u32 data_size)	
+					 # BPF_PERF_OUTPUT 테이블의 메서드
+					 # 사용자 지정(커스텀) 이벤트의 데이터를 유저 공간에 제출.
+   return 0;
+}
+"""
+
+b = BPF(text=program)       #BPF객체를 만들어준다.
+syscall = b.get_syscall_fnname("execve") 	#해당 커널에 일치하는 syscall의 커널 함수 이름 반환
+					 #https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#1-kprobes
+
+b.attach_kprobe(event=syscall, fn_name="hello") #syscall 커널 함수 트리거 될때  사용자가 정의한 fn_name의 함수 호출.
+
+b["config"][ct.c_int(0)] = ct.create_string_buffer(b"Hey root!")     # ctypes.create_string_buffer(init_or_size, size=None) 초기화시 바이트열 객체
+						       #키와 값이 user_msg_t *p 의 C 정의에 사용된 것과 동일한 유형으로 보장.
+						        #파이썬의 딕셔너리와 비슷
+b["config"][ct.c_int(501)] = ct.create_string_buffer(b"Hi user 501!")
+ 
+def print_event(cpu, data, size):  
+   data = b["output"].event(data)
+   print(f"{data.pid} {data.uid} {data.command.decode()} {data.message.decode()}")
+ 
+b["output"].open_perf_buffer(print_event)     # table.open_perf_buffers(callback, page_cnt=N, lost_cb=None)
+				       #BPF_PERF_OUTPUT()테이블에서 작동된다
+					#callback 함수로 print_event를 부른다.
+while True:  
+   b.perf_buffer_poll()			#BPF.perf_buffer_poll(timeout=T), T밀리초 단위로 모든 perf_buff 폴링.
+					# 모든 perf_buff에 대해 열려있다. 
+					# open_perf_buffer를 호출하는 동안에 제공되어진 콜백 함수를 호출함.
+					# perf_buffer_poll() -> open_perf_buffer(callback) ->callback
+
+
+
+
+
+
+
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------------
+
+
+#!/usr/bin/python3  
+# -*- coding: utf-8 -*-
+from bcc import BPF
+import ctypes as ct
+
+program = r"""
+struct user_msg_t {
+   char message[12];
+};
+
+BPF_HASH(config, u32, struct user_msg_t);
+
+BPF_RINGBUF_OUTPUT(output, 1);   				#ringbuf ring buffer을 통해 데이터를 사용자 공간으로 푸시
+  							#모든 CPU공유, 각각 할당 x
+							#데이터를 할당시키는 함수(reserve)와 데이터를 사용자 공간으로 푸시하는 함수가 있다.
+
+struct data_t {     
+   int pid;
+   int uid;
+   char command[16];
+   char message[12];
+};
+
+int hello(void *ctx) {
+   struct data_t data = {}; 
+   char message[12] = "Hello World";
+   struct user_msg_t *p;
+
+   data.pid = bpf_get_current_pid_tgid() >> 32;
+   data.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+
+   bpf_get_current_comm(&data.command, sizeof(data.command));
+
+   p = config.lookup(&data.uid);
+   if (p != 0) {
+      bpf_probe_read_kernel(&data.message, sizeof(data.message), p->message);       
+   } else {
+      bpf_probe_read_kernel(&data.message, sizeof(data.message), message); 
+   }
+
+   output.ringbuf_output(&data, sizeof(data), 0); 	# int ringbuf_output((void *)data, u64 data_size, u64 flags)
+						# ctx인수가 필요하지 않다.
+						# flag 에 BPF_RB_NO_WAKEUP: Do not sent notification of new data availability
+ 							BPF_RB_FORCE_WAKEUP: Send notification of new data availability unconditionally
+
+
+   return 0;
+}
+"""
+
+b = BPF(text=program) 
+b["config"][ct.c_int(0)] = ct.create_string_buffer(b"Hey root!")
+syscall = b.get_syscall_fnname("execve")
+b.attach_kprobe(event=syscall, fn_name="hello")
+ 
+def print_event(cpu, data, size):  
+   data = b["output"].event(data)
+   print(f"{data.pid} {data.uid} {data.command.decode()} {data.message.decode()}")
+ 
+b["output"].open_ring_buffer(print_event)  		# BPF_RINGBUF_OUTPUT()에서 정의한 테이블을 씀.
+						#링버퍼는 BPF프로그램 내에서 size 지정.
+						#callback이 데이터를 빠르게 처리하지 않으면 유실됨.
+while True:   
+   b.ring_buffer_poll()
+
+
+
